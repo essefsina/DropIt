@@ -23,7 +23,7 @@ import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "2.0.0"
+VERSION = "2.2.0"
 
 try:
     import qrcode  # noqa: F401
@@ -38,8 +38,8 @@ PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DropIt</title>
 <style>
-  :root { --bg:#0b0e14; --card:#131829; --card2:#1a2136; --line:#263049; --txt:#eef1f8;
-          --muted:#8b94ad; --acc:#38bdf8; --acc2:#818cf8; --good:#34d399; --bad:#f87171; }
+  :root { --bg:#0a0d16; --card:#12172a; --card2:#1a2140; --line:#2a3560; --txt:#eef1f8;
+          --muted:#8f99b8; --acc:#22d3ee; --acc2:#a78bfa; --good:#34d399; --bad:#fb7185; }
   * { box-sizing:border-box; margin:0; }
   body { background:radial-gradient(1100px 500px at 50% -10%, #16213d 0%, var(--bg) 55%) fixed, var(--bg);
          color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -49,6 +49,8 @@ PAGE = """<!DOCTYPE html>
   .logo { width:46px; height:46px; border-radius:14px; background:linear-gradient(135deg,var(--acc),var(--acc2));
           display:flex; align-items:center; justify-content:center; font-size:25px;
           box-shadow:0 8px 24px rgba(56,189,248,.35); }
+  .logoimg { width:46px; height:46px; border-radius:14px;
+          box-shadow:0 8px 24px rgba(56,189,248,.35); }
   h1 { font-size:25px; letter-spacing:-.02em; }
   .ver { font-size:11px; color:var(--muted); border:1px solid var(--line); padding:3px 9px; border-radius:20px; }
   .status { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
@@ -57,7 +59,10 @@ PAGE = """<!DOCTYPE html>
   @keyframes pulse { 50% { opacity:.45; } }
   .tagline { color:var(--muted); font-size:14px; margin:4px 0 22px; }
   .card { background:linear-gradient(180deg,var(--card2),var(--card)); border:1px solid var(--line);
-          border-radius:18px; padding:22px; margin-bottom:16px; box-shadow:0 12px 32px rgba(0,0,0,.35); }
+          border-radius:18px; padding:22px; margin-bottom:16px; box-shadow:0 12px 32px rgba(0,0,0,.35);
+          position:relative; overflow:hidden; }
+  .card::before { content:""; position:absolute; top:0; left:24px; right:24px; height:1px;
+          background:linear-gradient(90deg,transparent,rgba(34,211,238,.55),rgba(167,139,250,.55),transparent); }
   .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); margin-bottom:16px; }
   .connect { display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
   .urlbox { flex:1; min-width:250px; }
@@ -85,18 +90,34 @@ PAGE = """<!DOCTYPE html>
   .up .bar > div { height:100%; width:0%; background:linear-gradient(90deg,var(--acc),var(--acc2)); transition:width .12s; }
   .up.done .bar > div { background:var(--good); }
   .up.err { color:var(--bad); }
-  .frow { display:flex; align-items:center; gap:12px; padding:11px 4px; border-top:1px solid var(--line); font-size:14px; }
+  .frow { display:flex; align-items:center; gap:12px; padding:10px 8px; margin:0 -8px;
+          border-top:1px solid var(--line); font-size:14px; border-radius:12px; transition:background .15s; }
   .frow:first-child { border-top:none; }
+  .frow:hover { background:rgba(34,211,238,.05); }
+  .thumb { width:54px; height:54px; object-fit:cover; border-radius:12px; flex:none;
+          border:1px solid var(--line); background:#090c15; }
   .fic { font-size:20px; }
   .fname { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .fsize { color:var(--muted); font-size:12px; white-space:nowrap; }
-  .btn { border:1px solid var(--line); background:#090c15; color:var(--txt); border-radius:9px;
-         padding:8px 14px; font-size:13px; cursor:pointer; text-decoration:none; white-space:nowrap; }
+  .btn { border:1px solid var(--line); background:#090c15; color:var(--txt); border-radius:10px;
+         padding:8px 14px; font-size:13px; cursor:pointer; text-decoration:none; white-space:nowrap;
+         transition:border-color .15s, filter .15s; }
   .btn:hover { border-color:var(--acc); }
+  .btn.primary { background:linear-gradient(135deg,var(--acc),var(--acc2)); border:none;
+         color:#0a0f1e; font-weight:700; }
+  .btn.primary:hover { filter:brightness(1.12); }
   .btn.danger:hover { border-color:var(--bad); color:var(--bad); }
   .empty { color:var(--muted); font-size:14px; padding:10px 4px; }
   .cardhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
   .cardhead h2 { margin-bottom:0; }
+  .folderedit { display:none; margin:-6px 0 14px; }
+  .folderedit.open { display:block; }
+  .folderedit .row { display:flex; gap:8px; }
+  .folderedit input { flex:1; min-width:0; background:#090c15; border:1px solid var(--line);
+    border-radius:9px; color:var(--txt); padding:8px 12px; font-size:13px; font-family:ui-monospace,Consolas,monospace; }
+  .folderedit input:focus { outline:none; border-color:var(--acc); }
+  .folderedit .cur { color:var(--muted); font-size:12px; margin-top:8px; word-break:break-all; }
+  .folderedit .cur b { color:var(--txt); font-weight:600; }
   footer { text-align:center; color:var(--muted); font-size:12px; margin-top:26px; }
   .toast { position:fixed; bottom:26px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--card2);
            border:1px solid var(--acc); color:var(--txt); padding:11px 20px; border-radius:12px; font-size:14px;
@@ -108,7 +129,9 @@ PAGE = """<!DOCTYPE html>
 
 <div class="topbar">
   <div class="brand">
-    <div class="logo">&#x1F4E5;</div>
+    <img class="logoimg" src="/icon.png" alt="DropIt"
+         onerror="this.remove();document.getElementById('logofallback').style.display='flex';">
+    <div class="logo" id="logofallback" style="display:none">&#x1F4E5;</div>
     <div><h1>DropIt</h1></div>
     <span class="ver">v__VERSION__</span>
   </div>
@@ -131,14 +154,15 @@ PAGE = """<!DOCTYPE html>
   <h2>Send files</h2>
   <div id="drop">
     <div class="big">Drop files here</div>
-    <div class="small">or click to browse &mdash; they land in <b>__DIRNAME__</b></div>
+    <div class="small">or click to browse &mdash; they land in <b id="dirnamelabel">__DIRNAME__</b></div>
     <input type="file" id="picker" multiple style="display:none">
   </div>
   <div id="uploads"></div>
 </div>
 
 <div class="card">
-  <div class="cardhead"><h2>On this PC</h2>__DESKTOP__</div>
+  <div class="cardhead"><h2>On this PC</h2>__DESKTOPBTNS__</div>
+  __FOLDEREDIT__
   <div id="files"><p class="empty">Loading&hellip;</p></div>
 </div>
 
@@ -159,6 +183,21 @@ function iconFor(n){ const e=n.split(".").pop().toLowerCase();
   if(["zip","rar","7z","tar","gz"].includes(e)) return "&#x1F4E6;";
   if(["pdf"].includes(e)) return "&#x1F4D5;";
   return "&#x1F4C4;"; }
+function thumbFor(n){
+  if(/\\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i.test(n))
+    return `<img class="thumb" loading="lazy" src="/thumb/${encodeURIComponent(n)}" alt="">`;
+  return `<span class="fic">${iconFor(n)}</span>`;
+}
+async function openFile(name){
+  try {
+    if(window.pywebview && window.pywebview.api && window.pywebview.api.open_file){
+      const ok = await window.pywebview.api.open_file(name);
+      if(!ok) toast("Couldn't open that file");
+      return;
+    }
+  } catch(e){}
+  location.href = "/dl/" + encodeURIComponent(name);
+}
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show");
   clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2200); }
 
@@ -172,6 +211,30 @@ $("#copy").onclick = async () => {
 
 const of = $("#openfolder");
 if(of) of.onclick = () => { try { window.pywebview.api.open_folder(); } catch(e){} };
+
+const cf = $("#changefolder");
+if(cf){
+  const fe = $("#folderedit"), fp = $("#folderpath");
+  cf.onclick = () => { fp.value = fp.dataset.cur || ""; fe.classList.add("open"); fp.focus(); fp.select(); };
+  $("#foldercancel").onclick = () => fe.classList.remove("open");
+  $("#foldersave").onclick = async () => {
+    const p = fp.value.trim();
+    if(!p){ toast("Type a folder path first"); return; }
+    try {
+      const r = await window.pywebview.api.set_directory(p);
+      if(r && r.ok){
+        fp.dataset.cur = r.directory;
+        $("#foldercur").textContent = r.directory;
+        $("#dirnamelabel").textContent = r.dirname;
+        fe.classList.remove("open");
+        toast("Save folder changed");
+        loadFiles();
+      } else {
+        toast("Couldn't use that folder: " + ((r && r.error) || "unknown error"));
+      }
+    } catch(e){ toast("Couldn't change the folder"); }
+  };
+}
 
 drop.onclick = () => picker.click();
 ["dragover","dragenter"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
@@ -207,14 +270,16 @@ async function loadFiles(){
     const r = await fetch("/api/files"); const files = await r.json();
     if(!files.length){ box.innerHTML = '<p class="empty">Nothing here yet &mdash; beam something over from your phone.</p>'; return; }
     box.innerHTML = files.map((f,i) =>
-      `<div class="frow"><span class="fic">${iconFor(f.name)}</span>` +
+      `<div class="frow">${thumbFor(f.name)}` +
       `<span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>` +
       `<span class="fsize">${fmt(f.size)}</span>` +
-      `<a class="btn" href="/dl/${encodeURIComponent(f.name)}">Download</a>` +
+      `<button class="btn primary" data-open="${esc(f.name)}">Open</button>` +
       `<button class="btn danger" data-del="${i}">Delete</button></div>`
     ).join("");
     box.querySelectorAll("[data-del]").forEach(b =>
       b.onclick = () => delFile(files[+b.dataset.del].name));
+    box.querySelectorAll("[data-open]").forEach(b =>
+      b.onclick = () => openFile(b.dataset.open));
   } catch(e){ box.innerHTML = '<p class="empty">Could not load file list.</p>'; }
 }
 
@@ -242,6 +307,68 @@ def lan_ip() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def asset_path(name: str):
+    """Path to a bundled asset; works frozen (PyInstaller) and from source."""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        p = os.path.join(base, "assets", name)
+        if os.path.isfile(p):
+            return p
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", name)
+    return p if os.path.isfile(p) else None
+
+
+_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "svg"}
+
+
+def _is_image(name: str) -> bool:
+    return name.rsplit(".", 1)[-1].lower() in _IMAGE_EXTS if "." in name else False
+
+
+_THUMB_CACHE = {}
+
+
+def _thumbnail(path: str):
+    """Return (bytes, content_type) for a small preview of an image file."""
+    try:
+        key = (path, os.path.getmtime(path), os.path.getsize(path))
+    except OSError:
+        return None
+    hit = _THUMB_CACHE.get(key)
+    if hit:
+        return hit
+    data, ctype = None, "image/jpeg"
+    try:
+        from PIL import Image
+
+        img = Image.open(path)
+        img.thumbnail((384, 384), Image.LANCZOS)
+        if img.mode in ("RGBA", "LA", "PA"):
+            bg = Image.new("RGB", img.size, (10, 13, 22))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        else:
+            img = img.convert("RGB")
+        import io
+
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=72)
+        data = buf.getvalue()
+    except Exception:  # noqa: BLE001 - no PIL or unreadable: serve original
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        except OSError:
+            return None
+    if data is None:
+        return None
+    if len(_THUMB_CACHE) > 300:
+        _THUMB_CACHE.clear()
+    _THUMB_CACHE[key] = (data, ctype)
+    return data, ctype
 
 
 def safe_name(name: str) -> str:
@@ -316,16 +443,33 @@ class Handler(BaseHTTPRequestHandler):
                 "<div>Scan with your<br>phone camera</div></div>"
                 if HAS_QR else ""
             )
-            desktop_btn = (
+            desktop = getattr(self.server, "desktop", False)
+            desktop_btns = (
+                '<div style="display:flex;gap:8px;">'
                 '<button class="btn" id="openfolder">&#x1F4C1; Open folder</button>'
-                if getattr(self.server, "desktop", False) else ""
+                '<button class="btn" id="changefolder">Change...</button>'
+                "</div>"
+                if desktop else ""
+            )
+            folder_edit = (
+                '<div class="folderedit" id="folderedit">'
+                '<div class="row">'
+                '<input id="folderpath" data-cur="__DIRPATH__" spellcheck="false" autocomplete="off">'
+                '<button class="btn" id="foldersave">Save</button>'
+                '<button class="btn" id="foldercancel">Cancel</button>'
+                "</div>"
+                '<div class="cur">Files currently land in <b id="foldercur">__DIRPATH__</b></div>'
+                "</div>"
+                if desktop else ""
             )
             page = (
                 PAGE.replace("__VERSION__", VERSION)
                 .replace("__URL__", html.escape(self.server.url))
                 .replace("__DIRNAME__", html.escape(os.path.basename(self.server.directory)))
                 .replace("__QR__", qr_block)
-                .replace("__DESKTOP__", desktop_btn)
+                .replace("__DESKTOPBTNS__", desktop_btns)
+                .replace("__FOLDEREDIT__", folder_edit)
+                .replace("__DIRPATH__", html.escape(self.server.directory))
             )
             self._send(200, page.encode())
         elif self.path == "/qr.png":
@@ -333,6 +477,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, qr_png(self.server.url), "image/png")
             except Exception:  # noqa: BLE001 - qrcode/Pillow not installed
                 self._send(404, b"qr unavailable", "text/plain")
+        elif self.path == "/icon.png":
+            p = asset_path("icon.png")
+            if p:
+                with open(p, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            else:
+                self._send(404, b"no icon", "text/plain")
+        elif self.path.startswith("/thumb/"):
+            name = safe_name(urllib.parse.unquote(self.path[len("/thumb/"):]))
+            path = os.path.join(self.server.directory, name)
+            if not os.path.isfile(path) or not _is_image(name):
+                self._send(404, b"not found", "text/plain")
+            else:
+                made = _thumbnail(path)
+                if made is None:
+                    self._send(404, b"unreadable", "text/plain")
+                else:
+                    data, ctype = made
+                    self._send(200, data, ctype)
         elif self.path == "/api/files":
             items = []
             for name in sorted(os.listdir(self.server.directory)):

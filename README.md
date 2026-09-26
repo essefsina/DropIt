@@ -8,7 +8,11 @@ Beam files between your phone and PC over local WiFi. No cloud, no USB cable, no
 2. It installs everything and builds `dist\DropIt.exe` (takes a couple minutes the first time)
 3. Double-click `DropIt.exe` — a real native window opens, with a tray icon while it runs
 
-The app shows a **QR code** — scan it with your phone camera and you're connected. The tray menu lets you copy the phone link, toggle **Start with Windows**, and quit.
+The app shows a **QR code** — scan it with your phone camera and you're connected. The tray menu lets you reopen the window, copy the phone link, toggle **Start with Windows**, and quit.
+
+**Tray behavior:** the minimize button tucks DropIt into the system tray so transfers keep working in the background — no popups, no sounds. Clicking X exits the app for real. Double-click the tray icon (or choose **Open DropIt**) to bring the window back; **Quit DropIt** in the tray menu also exits. With **Start with Windows** on, DropIt launches silently into the tray on boot.
+
+**File list:** images show thumbnails, and **Open** launches a file in its default app (the phone browser still downloads as before). Change the save folder any time with **Change...** next to **Open folder**.
 
 ## 🐍 Quick run (no install)
 
