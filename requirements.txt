@@ -1,0 +1,7 @@
+# Desktop shell (native window + tray + QR codes). The core server in
+# dropit.py stays stdlib-only; these are only needed for app.py / the .exe.
+pywebview>=5.0
+pystray>=0.19
+Pillow>=10.0
+qrcode>=7.4
+pyinstaller>=6.0
