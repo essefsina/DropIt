@@ -48,7 +48,7 @@ Options: `python dropit.py --port 9000 --dir ./shared`
 | `app.py` | Desktop shell: native window, tray icon, autostart |
 | `requirements.txt` | Desktop/build dependencies |
 | `build.bat` | One-click Windows build → `DropIt.exe` |
-| `assets/icon.ico` | App icon |
+| `icon.ico` / `icon.png` | App icon |
 
 ## Why it exists
 

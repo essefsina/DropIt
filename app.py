@@ -5,7 +5,7 @@ Run:
     python app.py
 Build a Windows .exe:
     pip install -r requirements.txt
-    pyinstaller --noconfirm --onefile --windowed --name DropIt --icon assets/icon.ico app.py
+    pyinstaller --noconfirm --onefile --windowed --name DropIt --icon icon.ico app.py
 """
 
 import argparse
@@ -49,6 +49,96 @@ def save_config(cfg: dict) -> None:
 
 
 # ---------------------------------------------------------------- js api
+def _browse_for_folder_win(title="Choose a folder", initial=None):
+    """Native Windows folder picker (SHBrowseForFolderW).
+
+    pywebview's file dialog opens a *file* picker even with directory=True,
+    so this calls the real Win32 folder browser instead. Runs its own modal
+    loop, so it works from any thread. Returns the path or None on cancel.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    shell32 = ctypes.windll.shell32
+    ole32 = ctypes.windll.ole32
+    user32 = ctypes.windll.user32
+
+    BIF_RETURNONLYFSDIRS = 0x0001
+    BIF_NEWDIALOGSTYLE = 0x0040
+    BFFM_INITIALIZED = 1
+    BFFM_SETSELECTIONW = 0x467  # WM_USER + 103
+
+    class BROWSEINFOW(ctypes.Structure):
+        _fields_ = [
+            ("hwndOwner", wintypes.HWND),
+            ("pidlRoot", ctypes.c_void_p),
+            ("pszDisplayName", wintypes.LPWSTR),
+            ("lpszTitle", wintypes.LPCWSTR),
+            ("ulFlags", ctypes.c_uint),
+            ("lpfn", ctypes.c_void_p),
+            ("lParam", wintypes.LPARAM),
+            ("iImage", ctypes.c_int),
+        ]
+
+    init_path = os.path.abspath(os.path.expanduser(initial)) if initial else None
+
+    @ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HWND, ctypes.c_uint,
+                        wintypes.LPARAM, wintypes.LPARAM)
+    def _cb(hwnd, msg, lp, data):
+        if msg == BFFM_INITIALIZED and init_path:
+            user32.SendMessageW(hwnd, BFFM_SETSELECTIONW, 1, init_path)
+        return 0
+
+    user32.SendMessageW.argtypes = [wintypes.HWND, ctypes.c_uint,
+                                    wintypes.WPARAM, wintypes.LPCWSTR]
+    user32.SendMessageW.restype = wintypes.LPARAM
+    shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BROWSEINFOW)]
+    shell32.SHBrowseForFolderW.restype = ctypes.c_void_p
+    shell32.SHGetPathFromIDListW.argtypes = [ctypes.c_void_p, wintypes.LPWSTR]
+    shell32.SHGetPathFromIDListW.restype = wintypes.BOOL
+    # NOTE: every one of these needs explicit argtypes. Without them ctypes
+    # defaults to c_int, which cannot hold a 64-bit pointer/address and dies
+    # with "OverflowError: int too long to convert".
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    ole32.CoTaskMemFree.restype = None
+    ole32.CoInitializeEx.argtypes = [wintypes.LPVOID, wintypes.DWORD]
+    ole32.CoInitializeEx.restype = ctypes.c_long  # HRESULT
+    ole32.CoUninitialize.argtypes = []
+    ole32.CoUninitialize.restype = None
+
+    # The new-style folder dialog needs COM on this thread. pywebview's
+    # JS bridge may call us from a thread where COM isn't initialized,
+    # which makes the dialog fail outright.
+    COINIT_APARTMENTTHREADED = 0x2
+    com_ok = ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+    try:
+        display = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        bi = BROWSEINFOW()
+        bi.hwndOwner = None
+        bi.pidlRoot = None
+        bi.pszDisplayName = ctypes.cast(display, wintypes.LPWSTR)
+        bi.lpszTitle = title
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE
+        bi.lpfn = ctypes.cast(_cb, ctypes.c_void_p)
+        bi.lParam = 0
+        bi.iImage = 0
+
+        pidl = shell32.SHBrowseForFolderW(ctypes.byref(bi))
+        if not pidl:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            if shell32.SHGetPathFromIDListW(pidl, buf):
+                return buf.value or None
+            return None
+        finally:
+            ole32.CoTaskMemFree(pidl)
+            _cb  # keep the callback alive until the dialog is gone  # noqa: B018
+    finally:
+        if com_ok == 0:  # S_OK: we initialized COM, so uninitialize it
+            ole32.CoUninitialize()
+
+
 class Api:
     """Exposed to the web UI as window.pywebview.api."""
 
@@ -86,6 +176,22 @@ class Api:
         except Exception:  # noqa: BLE001
             return False
 
+    def open_path(self, path: str) -> bool:
+        """Open an arbitrary local file (e.g. a note the user saved via Save dialog)."""
+        try:
+            p = os.path.abspath(os.path.expanduser(str(path)))
+            if not os.path.isfile(p):
+                return False
+            if sys.platform == "win32":
+                os.startfile(p)  # noqa: S606
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", p])
+            else:
+                subprocess.Popen(["xdg-open", p])
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
     def set_directory(self, path: str) -> dict:
         """Change the save folder from the web UI. Returns JSON-serializable."""
         try:
@@ -107,6 +213,88 @@ class Api:
             return {"ok": False, "error": str(e)}
         except Exception:  # noqa: BLE001
             return {"ok": False, "error": "unexpected error"}
+
+    def browse_directory(self) -> dict:
+        """Let the user pick the save folder with a native folder dialog."""
+        if sys.platform == "win32":
+            # Real folder picker. pywebview's dialog opens a *file* picker
+            # even with directory=True, so it is not used here on Windows.
+            try:
+                path = _browse_for_folder_win(
+                    title="Choose the DropIt save folder",
+                    initial=self.server.directory,
+                )
+            except Exception as e:  # noqa: BLE001
+                import traceback
+
+                traceback.print_exc()
+                return {"ok": False,
+                        "error": "Folder picker failed (%s: %s)"
+                                 % (type(e).__name__, e)}
+            if not path:
+                return {"ok": False, "error": "cancelled"}
+            try:
+                return self.set_directory(path)
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        try:
+            import webview
+
+            wins = getattr(webview, "windows", [])
+            if not wins:
+                return {"ok": False, "error": "no window"}
+            result = wins[0].create_file_dialog(
+                webview.OPEN_DIALOG,
+                directory=True,
+                allow_multiple=False,
+            )
+            if not result:
+                return {"ok": False, "error": "cancelled"}
+            path = result[0] if isinstance(result, (list, tuple)) else result
+            return self.set_directory(path)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    def save_note(self, params) -> dict:
+        """Save a text note through a native save dialog (desktop window)."""
+        try:
+            import webview
+
+            text = str(params.get("text", "")) if isinstance(params, dict) else ""
+            nid = str(params.get("id", "note")) if isinstance(params, dict) else "note"
+            wins = getattr(webview, "windows", [])
+            if not wins:
+                return {"ok": False, "error": "no window"}
+            safe = "".join(c for c in nid if c.isalnum())[:32] or "note"
+            result = wins[0].create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename="shared-text-%s.txt" % safe,
+                file_types=("Text files (*.txt)",),
+            )
+            if not result:
+                return {"ok": False, "error": "cancelled"}
+            path = result[0] if isinstance(result, (list, tuple)) else result
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return {"ok": True, "path": path}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    def get_clipboard(self) -> dict:
+        """Read text from the native clipboard (no browser permission prompt)."""
+        try:
+            import tkinter
+
+            r = tkinter.Tk()
+            r.withdraw()
+            try:
+                text = r.clipboard_get()
+            except Exception:  # noqa: BLE001
+                text = ""  # empty or non-text clipboard
+            r.destroy()
+            return {"ok": True, "text": text or ""}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "text": "", "error": str(e)}
 
 
 # --------------------------------------------------------------- tray icon
@@ -280,9 +468,9 @@ def main():
     window = webview.create_window(
         "DropIt",
         f"http://127.0.0.1:{args.port}",
-        width=800,
-        height=720,
-        min_size=(560, 600),
+        width=1280,
+        height=800,
+        min_size=(720, 600),
         js_api=Api(server),
         hidden=args.minimized,
     )
