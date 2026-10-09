@@ -5,7 +5,7 @@ Run:
     python app.py
 Build a Windows .exe:
     pip install -r requirements.txt
-    pyinstaller --noconfirm --onefile --windowed --name DropIt --icon icon.ico app.py
+    pyinstaller --noconfirm --onefile --windowed --name DropIt --icon icon.ico --add-data "ai_model;ai_model" app.py
 """
 
 import argparse
